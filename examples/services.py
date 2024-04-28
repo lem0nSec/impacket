@@ -20,12 +20,17 @@
 #   [ ] Check errors
 #
 
+# services.py (edited by Lem0nSec_)
+# services.py now prints the service StartName when services are listed.
+# It also saves the output to a .csv file.
+
 from __future__ import division
 from __future__ import print_function
 import sys
 import argparse
 import logging
 import codecs
+import csv
 
 from impacket.examples import logger
 from impacket.examples.utils import parse_target
@@ -163,31 +168,69 @@ class SVCCTL:
             else:
                print("UNKNOWN")
         elif self.__action == 'LIST':
-            logging.info("Listing services available on target")
-            #resp = rpc.EnumServicesStatusW(scManagerHandle, svcctl.SERVICE_WIN32_SHARE_PROCESS )
-            #resp = rpc.EnumServicesStatusW(scManagerHandle, svcctl.SERVICE_WIN32_OWN_PROCESS )
-            #resp = rpc.EnumServicesStatusW(scManagerHandle, serviceType = svcctl.SERVICE_FILE_SYSTEM_DRIVER, serviceState = svcctl.SERVICE_STATE_ALL )
-            resp = scmr.hREnumServicesStatusW(rpc, scManagerHandle)
-            for i in range(len(resp)):
-                print("%30s - %70s - " % (resp[i]['lpServiceName'][:-1], resp[i]['lpDisplayName'][:-1]), end=' ')
-                state = resp[i]['ServiceStatus']['dwCurrentState']
-                if state == scmr.SERVICE_CONTINUE_PENDING:
-                   print("CONTINUE PENDING")
-                elif state == scmr.SERVICE_PAUSE_PENDING:
-                   print("PAUSE PENDING")
-                elif state == scmr.SERVICE_PAUSED:
-                   print("PAUSED")
-                elif state == scmr.SERVICE_RUNNING:
-                   print("RUNNING")
-                elif state == scmr.SERVICE_START_PENDING:
-                   print("START PENDING")
-                elif state == scmr.SERVICE_STOP_PENDING:
-                   print("STOP PENDING")
-                elif state == scmr.SERVICE_STOPPED:
-                   print("STOPPED")
-                else:
-                   print("UNKNOWN")
-            print("Total Services: %d" % len(resp))
+            logging.info("Listing available services on target %s" % self.__options.target_ip)
+            
+            opts = {
+                #'Computer' : '',
+                'ServiceName' : '',
+                'DisplayName' : '',
+                'StartName' : '',
+                'CurrentState' : ''
+            }
+            fields = []
+            for field in opts:
+                fields.append(field)
+
+            try:
+                out = 'services_{}.csv'.format(self.__options.target_ip)
+                with open("services_{}.csv".format(self.__options.target_ip), "w") as csvfile:
+                    writer = csv.DictWriter(csvfile, fieldnames=fields)
+                    writer.writeheader()
+                    resp = scmr.hREnumServicesStatusW(rpc, scManagerHandle)
+                    for i in range(len(resp)):
+                        try:
+                            ans = scmr.hROpenServiceW(rpc, scManagerHandle, resp[i]['lpServiceName'][:-1])
+                            serviceHandle = ans['lpServiceHandle']
+                            resp_1 = scmr.hRQueryServiceConfigW(rpc, serviceHandle)
+                            start_name = resp_1['lpServiceConfig']['lpServiceStartName'][:-1]
+                        except:
+                            continue
+                        if start_name == '':
+                            start_name = "N/A"
+                        state = resp[i]['ServiceStatus']['dwCurrentState']
+                        if state == scmr.SERVICE_CONTINUE_PENDING:
+                           state = "CONTINUE PENDING"
+                        elif state == scmr.SERVICE_PAUSE_PENDING:
+                           state = "PAUSE PENDING"
+                        elif state == scmr.SERVICE_PAUSED:
+                           state = "PAUSED"
+                        elif state == scmr.SERVICE_RUNNING:
+                           state = "RUNNING"
+                        elif state == scmr.SERVICE_START_PENDING:
+                           state = "START PENDING"
+                        elif state == scmr.SERVICE_STOP_PENDING:
+                           state = "STOP PENDING"
+                        elif state == scmr.SERVICE_STOPPED:
+                           state = "STOPPED"
+                        else:
+                           state = "UNKNOWN"
+                        
+                        print("%40s - %90s - %30s - %10s" % (resp[i]['lpServiceName'][:-1], resp[i]['lpDisplayName'][:-1], start_name, state))
+                        #opts['Computer'] = self.__options.target_ip
+                        opts['ServiceName'] = resp[i]['lpServiceName'][:-1]
+                        opts['DisplayName'] = resp[i]['lpDisplayName'][:-1]
+                        opts['StartName'] = start_name
+                        opts['CurrentState'] = state
+                        writer.writerow(opts)
+
+                        scmr.hRCloseServiceHandle(rpc, serviceHandle)
+                    print("")
+                    logging.info("Total Services: %d" % len(resp))
+                    logging.info("Results written to %s" % (out))
+            
+            except Exception as error:
+                print(error)
+
         elif self.__action == 'CREATE':
             logging.info("Creating service %s" % self.__options.name)
             scmr.hRCreateServiceW(rpc, scManagerHandle, self.__options.name + '\x00', self.__options.display + '\x00',
@@ -329,13 +372,17 @@ if __name__ == '__main__':
 
     options = parser.parse_args()
 
+    if options.action is None:
+        parser.print_help()
+        sys.exit(1)
+
     if options.debug is True:
         logging.getLogger().setLevel(logging.DEBUG)
         # Print the Library's installation path
         logging.debug(version.getInstallationPath())
     else:
         logging.getLogger().setLevel(logging.INFO)
-
+    
     domain, username, password, remoteName = parse_target(options.target)
 
     if domain is None:
