@@ -23,7 +23,9 @@
 # The original atexec.py now includes the 'list' positional argument, which allows the
 # operator to list scheduled tasks on the remote host and save them to a .csv file.
 # Task name, User, and command + argument will be saved
-#
+# Also note that the original functionality of atexec.py has been preserved. Just type
+# either 'create' or 'list' as positional arguments to respectively create a new task
+# (atexec.py) or list tasks remotely.
 
 from __future__ import division
 from __future__ import print_function
