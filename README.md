@@ -28,6 +28,12 @@ What protocols are featured?
  * Plain, NTLM and Kerberos authentications, using password/hashes/tickets/keys.
  * Portions/full implementation of the following MSRPC interfaces: EPM, DTYPES, LSAD, LSAT, NRPC, RRP, SAMR, SRVS, WKST, SCMR, BKRP, DHCPM, EVEN6, MGMT, SASEC, TSCH, DCOM, WMI, OXABREF, NSPI, OXNSPI.
  * Portions of TDS (MSSQL) and LDAP protocol implementations.
+
+ℹ️ About this Fork ℹ️
+----------------------------
+Things I have modified in this fork are:
+* Renamed atexec.py to scheduler.py. It now lists remote scheduled tasks other than just creating and running them.
+* Edited services.py to print service StartName when listing available services.
  
 Maintainer
 ==========
