@@ -19,6 +19,12 @@
 #   DCE/RPC for TSCH
 #
 
+# scheduler.py (former 'atexec.py')
+# The original atexec.py now includes the 'list' positional argument, which allows the
+# operator to list scheduled tasks on the remote host and save them to a .csv file.
+# Task name, User, and command + argument will be saved
+#
+
 from __future__ import division
 from __future__ import print_function
 import string
