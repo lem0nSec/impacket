@@ -27,6 +27,8 @@ import argparse
 import time
 import random
 import logging
+import csv
+import xml.etree.ElementTree as tree
 
 from impacket.examples import logger
 from impacket import version
@@ -40,9 +42,9 @@ from six import PY2
 
 CODEC = sys.stdout.encoding
 
-class TSCH_EXEC:
-    def __init__(self, username='', password='', domain='', hashes=None, aesKey=None, doKerberos=False, kdcHost=None,
-                 command=None, sessionId=None, silentCommand=False):
+class TSCH:
+    def __init__(self, username='', password='', domain='', address = '', hashes=None, aesKey=None, doKerberos=False, kdcHost=None,
+                 action = None, command=None, sessionId=None, silentCommand=False):
         self.__username = username
         self.__password = password
         self.__domain = domain
@@ -51,9 +53,11 @@ class TSCH_EXEC:
         self.__aesKey = aesKey
         self.__doKerberos = doKerberos
         self.__kdcHost = kdcHost
+        self.__action = action
         self.__command = command
         self.__silentCommand = silentCommand
         self.sessionId = sessionId
+        self.address = address
 
         if hashes is not None:
             self.__lmhash, self.__nthash = hashes.split(':')
@@ -68,7 +72,10 @@ class TSCH_EXEC:
                                          self.__aesKey)
             rpctransport.set_kerberos(self.__doKerberos, self.__kdcHost)
         try:
-            self.doStuff(rpctransport)
+            if self.__action == "create":
+                self.execTask(rpctransport)
+            elif self.__action == "list":
+                self.listTasks(rpctransport)
         except Exception as e:
             if logging.getLogger().level == logging.DEBUG:
                 import traceback
@@ -77,7 +84,7 @@ class TSCH_EXEC:
             if str(e).find('STATUS_OBJECT_NAME_NOT_FOUND') >=0:
                 logging.info('When STATUS_OBJECT_NAME_NOT_FOUND is received, try running again. It might work')
 
-    def doStuff(self, rpctransport):
+    def execTask(self, rpctransport):
         def output_callback(data):
             try:
                 print(data.decode(CODEC))
@@ -235,7 +242,61 @@ class TSCH_EXEC:
         smbConnection.deleteFile('ADMIN$', 'Temp\\%s' % tmpFileName)
 
         dce.disconnect()
+    
+    def listTasks(self, rpctransport):
+        def parse_xml(pXml, opts):
+            Command = ''
+            Argument = ''
+            document = tree.fromstring(pXml.rstrip('\x00'))
+            for item in document.iter():
+                if item.tag.split('}')[1] == 'UserId':
+                    opts['UserId'] = item.text
+                elif item.tag.split('}')[1] == 'Command':
+                    Command = item.text
+                elif item.tag.split('}')[1] == 'Arguments':
+                    Argument = item.text
+            Task = Command + ' ' + Argument
+            opts['Task'] = Task
+        
+        dce = rpctransport.get_dce_rpc()
+        dce.set_credentials(*rpctransport.get_credentials())
+        if self.__doKerberos is True:
+            dce.set_auth_type(RPC_C_AUTHN_GSS_NEGOTIATE)
+        dce.connect()
+        dce.set_auth_level(RPC_C_AUTHN_LEVEL_PKT_PRIVACY)
+        dce.bind(tsch.MSRPC_UUID_TSCHS)
 
+        opts = {
+            "Name": '',
+            "UserId": '',
+            "Task": ''
+        }
+        fields = []
+        for field in opts:
+                fields.append(field)
+
+        respName = tsch.hSchRpcEnumTasks(dce, '\\')
+        taskNumber = respName['pcNames']
+        logging.info('Enumerating scheduled tasks on %s', self.address)
+        try:
+            out = 'schtasks_{}.csv'.format(self.address)
+            with open(out, "w") as csvfile:
+                writer = csv.DictWriter(csvfile, fieldnames=fields)
+                writer.writeheader()
+                for item in respName['pNames']:
+                    taskInfo = tsch.hSchRpcRetrieveTask(dce, item['Data'])
+                    fullXml = taskInfo['pXml']
+                    opts['Name'] = item['Data']
+                    parse_xml(fullXml, opts)
+                    print('%60s - %110s' % (opts['UserId'], opts['Name']))
+                    writer.writerow(opts)
+            print("")
+            logging.info("Total Scheduled Tasks: %d" %(taskNumber))
+            logging.info("Results written to %s" % (out))
+        except Exception as error:
+            logging.error(error)
+            
+        dce.disconnect()
 
 # Process command-line arguments.
 if __name__ == '__main__':
@@ -244,6 +305,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
 
     parser.add_argument('target', action='store', help='[[domain/]username[:password]@]<targetName or address>')
+    parser.add_argument('action', action='store', help='{list,create}')
     parser.add_argument('command', action='store', nargs='*', default=' ', help='command to execute at the target ')
     parser.add_argument('-session-id', action='store', type=int, help='an existed logon session to use (no output, no cmd.exe)')
     parser.add_argument('-ts', action='store_true', help='adds timestamp to every logging output')
@@ -275,6 +337,10 @@ if __name__ == '__main__':
 
     options = parser.parse_args()
 
+    if options.action is None:
+        parser.print_help()
+        sys.exit(1)
+
     # Init the example's logger theme
     logger.init(options.ts)
 
@@ -286,8 +352,12 @@ if __name__ == '__main__':
 
     logging.warning("This will work ONLY on Windows >= Vista")
 
-    if ''.join(options.command) == ' ':
+    if (options.action == 'create') and (''.join(options.command) == ' '):
         logging.error('You need to specify a command to execute!')
+        sys.exit(1)
+
+    if options.action != 'create' and options.action != 'list':
+        logging.error('Available options are {list,create}')
         sys.exit(1)
 
     if options.debug is True:
@@ -308,12 +378,11 @@ if __name__ == '__main__':
 
     if password == '' and username != '' and options.hashes is None and options.no_pass is False and options.aesKey is None:
         from getpass import getpass
-
         password = getpass("Password:")
 
     if options.aesKey is not None:
         options.k = True
 
-    atsvc_exec = TSCH_EXEC(username, password, domain, options.hashes, options.aesKey, options.k, options.dc_ip,
-                           ' '.join(options.command), options.session_id, options.silentcommand)
-    atsvc_exec.play(address)
+    atsvc = TSCH(username, password, domain, address, options.hashes, options.aesKey, options.k, options.dc_ip,
+                           options.action, ' '.join(options.command), options.session_id, options.silentcommand)
+    atsvc.play(address)
